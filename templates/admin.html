@@ -1,0 +1,322 @@
+{% extends "base.html" %}{% block title %}Painel administrativo | Forno da
+Vila{% endblock %} {% block content %}
+<section class="admin-page">
+  <div class="admin-heading">
+    <div>
+      <span class="eyebrow">CENTRAL DE CONTROLE</span>
+      <h1>Painel administrativo</h1>
+      <p>Gerencie pedidos, cardápio e promoções.</p>
+    </div>
+    <a class="btn btn-outline" href="{{ url_for('index') }}">Ver loja ↗</a>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card">
+      <small>Faturamento de hoje*</small
+      ><strong>R$ {{ '%.2f'|format(total_hoje/100)|replace('.', ',') }}</strong
+      ><span>*Pedidos não cancelados</span>
+    </div>
+    <div class="stat-card">
+      <small>Pedidos carregados</small
+      ><strong id="admin-order-count">{{ pedidos|length }}</strong
+      ><span>Últimos 80 pedidos</span>
+    </div>
+    <div class="stat-card">
+      <small>Produtos ativos</small
+      ><strong>{{ produtos|selectattr('ativo')|list|length }}</strong
+      ><span>No cardápio</span>
+    </div>
+  </div>
+  <div class="admin-tabs">
+    <a href="#pedidos">Pedidos</a><a href="#produtos">Produtos</a
+    ><a href="#promocoes">Promoções</a>
+  </div>
+  <section class="admin-section" id="pedidos">
+    <div class="admin-section-title">
+      <div>
+        <span class="eyebrow">ACOMPANHAMENTO</span>
+        <h2>Pedidos recebidos</h2>
+      </div>
+      <span class="live-pill">● Atualização automática</span>
+    </div>
+    <div id="admin-orders">
+      {% for p in pedidos %}
+      <article class="admin-order">
+        <div class="admin-order-head">
+          <div>
+            <b>Pedido #{{ p.id }} · {{ p.cliente.nome }}</b
+            ><small>{{ p.criado_em.strftime('%d/%m/%Y %H:%M') }}</small>
+          </div>
+          <strong>R$ {{ '%.2f'|format(p.total/100)|replace('.', ',') }}</strong>
+        </div>
+        <div class="admin-order-items">
+          {% for i in p.itens %}
+          <p>
+            {{ i.quantidade }}x {{ i.nome_produto }} — R$ {{
+            '%.2f'|format(i.preco_unitario*i.quantidade/100)|replace('.', ',')
+            }}
+          </p>
+          {% endfor %}
+        </div>
+        <p class="muted">📍 {{ p.endereco }} · {{ p.pagamento }}</p>
+        {% if p.observacao %}
+        <p class="muted">Obs.: {{ p.observacao }}</p>
+        {% endif %}
+        <div class="admin-order-actions">
+          <span class="status">{{ p.status }}</span>
+          <form
+            method="post"
+            action="{{ url_for('alterar_status', pedido_id=p.id) }}"
+          >
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            <select name="status">
+              <option
+                value="Recebido"
+                {%
+                if
+                p.status == "Recebido"
+                %}selected{%
+                endif
+                %}
+              >
+                Recebido
+              </option>
+
+              <option
+                value="Em preparo"
+                {%
+                if
+                p.status == "Em preparo"
+                %}selected{%
+                endif
+                %}
+              >
+                Em preparo
+              </option>
+
+              <option
+                value="Saiu para entrega"
+                {%
+                if
+                p.status == "Saiu para entrega"
+                %}selected{%
+                endif
+                %}
+              >
+                Saiu para entrega
+              </option>
+
+              <option
+                value="Concluído"
+                {%
+                if
+                p.status == "Concluído"
+                %}selected{%
+                endif
+                %}
+              >
+                Concluído
+              </option>
+
+              <option
+                value="Cancelado"
+                {%
+                if
+                p.status == "Cancelado"
+                %}selected{%
+                endif
+                %}
+              >
+                Cancelado
+              </option>
+            </select>
+            <button class="btn btn-primary btn-small">Atualizar</button
+            ><button
+              type="button"
+              class="btn btn-outline btn-small"
+              onclick="window.print()"
+            >
+              Imprimir
+            </button>
+          </form>
+        </div>
+      </article>
+      {% else %}
+      <p class="empty-state">Nenhum pedido recebido ainda.</p>
+      {% endfor %}
+    </div>
+  </section>
+  <section class="admin-section" id="produtos">
+    <div class="admin-section-title">
+      <div>
+        <span class="eyebrow">CARDÁPIO</span>
+        <h2>Adicionar produto</h2>
+      </div>
+    </div>
+    <form
+      class="admin-form"
+      method="post"
+      action="{{ url_for('salvar_produto') }}"
+    >
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" /><input
+        type="hidden"
+        name="produto_id"
+        value="{{ produto_edicao.id if produto_edicao else '' }}"
+      /><label
+        >Nome<input
+          name="nome"
+          required
+          value="{{ produto_edicao.nome if produto_edicao else '' }}" /></label
+      ><label
+        >Categoria<select name="categoria">
+          {% for c in ['Pizzas','Bebidas','Sobremesas'] %}
+          <option
+            {%
+            if
+            produto_edicao
+            and
+            produto_edicao.categoria == c
+            %}selected{%
+            endif
+            %}
+          >
+            {{ c }}
+          </option>
+          {% endfor %}
+        </select></label
+      ><label
+        >Preço (R$)<input
+          name="preco"
+          type="number"
+          min="0.01"
+          step="0.01"
+          required
+          value="{{ '%.2f'|format(produto_edicao.preco/100) if produto_edicao else '' }}" /></label
+      ><label
+        >URL da imagem<input
+          name="imagem"
+          type="url"
+          placeholder="https://..."
+          value="{{ produto_edicao.imagem_url if produto_edicao else '' }}" /></label
+      ><label class="wide"
+        >Descrição<input
+          name="descricao"
+          maxlength="300"
+          value="{{ produto_edicao.descricao if produto_edicao else '' }}" /></label
+      ><label class="check-label"
+        ><input
+          type="checkbox"
+          name="ativo"
+          {%
+          if
+          not
+          produto_edicao
+          or
+          produto_edicao.ativo
+          %}checked{%
+          endif
+          %}
+        />
+        Produto ativo</label
+      ><button class="btn btn-primary">
+        {{ 'Salvar alterações' if produto_edicao else 'Cadastrar produto' }}</button
+      >{% if produto_edicao %}<a
+        class="btn btn-outline"
+        href="{{ url_for('admin') }}#produtos"
+        >Cancelar edição</a
+      >{% endif %}
+    </form>
+    <div class="admin-product-list">
+      {% for p in produtos %}
+      <div class="admin-product">
+        <div>
+          <b>{{ p.nome }}</b
+          ><small
+            >{{ p.categoria }} · R$ {{ '%.2f'|format(p.preco/100)|replace('.',
+            ',') }} · {{ 'Ativo' if p.ativo else 'Inativo' }}</small
+          >
+        </div>
+        <div class="row-actions">
+          <a
+            class="btn btn-outline btn-small"
+            href="{{ url_for('admin', editar=p.id) }}#produtos"
+            >Editar</a
+          >
+          <form
+            method="post"
+            action="{{ url_for('excluir_produto', produto_id=p.id) }}"
+          >
+            <input
+              type="hidden"
+              name="csrf_token"
+              value="{{ csrf_token() }}"
+            /><button class="btn btn-outline btn-small">
+              {{ 'Desativar / excluir' if p.ativo else 'Excluir' }}
+            </button>
+          </form>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  <section class="admin-section" id="promocoes">
+    <div class="admin-section-title">
+      <div>
+        <span class="eyebrow">OFERTAS</span>
+        <h2>Promoções com validade</h2>
+      </div>
+    </div>
+    <form
+      class="admin-form"
+      method="post"
+      action="{{ url_for('criar_promocao') }}"
+    >
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" /><label
+        >Título<input
+          name="titulo"
+          required
+          placeholder="Ex.: Terça da pizza" /></label
+      ><label
+        >Duração (horas)<input
+          name="duracao_horas"
+          type="number"
+          min="1"
+          max="720"
+          required
+          placeholder="24" /></label
+      ><label class="wide"
+        >Descrição<input
+          name="descricao"
+          maxlength="300"
+          placeholder="Descreva a oferta" /></label
+      ><button class="btn btn-primary">Criar promoção</button>
+    </form>
+    <div class="admin-product-list">
+      {% for p in promos %}
+      <div class="admin-product">
+        <div>
+          <b>{{ p.titulo }}</b
+          ><small
+            >Até {{ p.fim.strftime('%d/%m/%Y %H:%M') }} · {{ 'Ativa' if p.ativa
+            and p.fim > now else 'Expirada' }}</small
+          >
+        </div>
+        <form
+          method="post"
+          action="{{ url_for('excluir_promocao', promo_id=p.id) }}"
+        >
+          <input
+            type="hidden"
+            name="csrf_token"
+            value="{{ csrf_token() }}"
+          /><button class="btn btn-outline btn-small">Remover</button>
+        </form>
+      </div>
+      {% else %}
+      <p class="muted">Nenhuma promoção cadastrada.</p>
+      {% endfor %}
+    </div>
+  </section>
+</section>
+{% endblock %} {% block scripts %}
+<script src="{{ url_for('static', filename='js/admin.js') }}"></script>
+{% endblock %}

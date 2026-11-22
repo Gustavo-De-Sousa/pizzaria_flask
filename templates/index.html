@@ -1,0 +1,163 @@
+{% extends "base.html" %} {% block title %}Forno da Vila | Peça sua pizza{%
+endblock %} {% block content %}
+<section class="hero">
+  <div class="hero-content">
+    <span class="eyebrow">MASSA ARTESANAL • INGREDIENTES FRESCOS</span>
+    <h1>Uma boa pizza<br /><em>muda a noite.</em></h1>
+    <p>
+      Escolha seus sabores favoritos e receba quentinha, direto do nosso forno.
+    </p>
+    <a href="#cardapio" class="btn btn-primary">Ver cardápio <span>→</span></a>
+    <div class="hero-note">★ Feita na hora · Entrega com carinho</div>
+  </div>
+  <div class="hero-art">
+    <div class="pizza-orbit"></div>
+    <div class="pizza-emoji">🍕</div>
+    <div class="hero-sticker">MASSA<br />FRESCA<br /><b>TODO DIA</b></div>
+  </div>
+</section>
+{% if promos %}
+<section class="promo-strip">
+  <div>
+    <span class="eyebrow">OFERTAS ESPECIAIS</span>
+    <h2>Promoções por tempo limitado</h2>
+  </div>
+  <div class="promo-list">
+    {% for p in promos %}
+    <article class="promo-card">
+      <b>{{ p.titulo }}</b>
+      <p>{{ p.descricao }}</p>
+      <small data-countdown="{{ p.fim.isoformat() }}"
+        >Calculando tempo...</small
+      >
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+<section class="menu-section" id="cardapio">
+  <div class="section-heading">
+    <div>
+      <span class="eyebrow">ESCOLHA SEU FAVORITO</span>
+      <h2>Nosso cardápio</h2>
+    </div>
+    <p>Sabores que combinam com qualquer momento.</p>
+  </div>
+  <div class="category-tabs">
+    {% for c in categorias %}<button
+      class="category-tab {% if loop.first %}active{% endif %}"
+      data-filter="{{ c }}"
+    >
+      {{ c }}</button
+    >{% endfor %}
+  </div>
+  <div class="product-grid" id="product-grid">
+    {% for p in produtos %}
+    <article class="product-card" data-category="{{ p.categoria }}">
+      <div class="product-image">
+        {% if p.imagem_url %}<img
+          src="{{ p.imagem_url }}"
+          alt="{{ p.nome }}"
+          loading="lazy"
+        />{% else %}<span
+          >{% if p.categoria == 'Pizzas' %}🍕{% elif p.categoria == 'Bebidas'
+          %}🥤{% else %}🍫{% endif %}</span
+        >{% endif %}<small>{{ p.categoria }}</small>
+      </div>
+      <div class="product-info">
+        <h3>{{ p.nome }}</h3>
+        <p>{{ p.descricao }}</p>
+        <div class="product-bottom">
+          <strong>R$ {{ '%.2f'|format(p.preco/100)|replace('.', ',') }}</strong
+          ><button
+            class="add-button"
+            data-id="{{ p.id }}"
+            data-name="{{ p.nome }}"
+            aria-label="Adicionar {{ p.nome }}"
+          >
+            +
+          </button>
+        </div>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+<section class="how-section">
+  <span class="eyebrow">É SIMPLES ASSIM</span>
+  <h2>Da nossa cozinha até você</h2>
+  <div class="steps">
+    <div>
+      <b>01</b><span>🍕</span>
+      <h3>Escolha</h3>
+      <p>Monte seu pedido com seus favoritos.</p>
+    </div>
+    <div>
+      <b>02</b><span>🛵</span>
+      <h3>Receba</h3>
+      <p>Preparamos tudo na hora e enviamos.</p>
+    </div>
+    <div>
+      <b>03</b><span>❤️</span>
+      <h3>Aproveite</h3>
+      <p>É só abrir a caixa e ser feliz.</p>
+    </div>
+  </div>
+</section>
+<button class="cart-fab" id="cart-open">
+  🛒 <span>Meu carrinho</span><b id="cart-count">0</b>
+</button>
+<div class="modal-backdrop" id="cart-modal" aria-hidden="true">
+  <section class="cart-panel">
+    <div class="cart-header">
+      <div>
+        <span class="eyebrow">SEU PEDIDO</span>
+        <h2>Carrinho</h2>
+      </div>
+      <button class="icon-button" id="cart-close">✕</button>
+    </div>
+    <div id="cart-items" class="cart-items">
+      <p class="empty-cart">Seu carrinho está vazio.</p>
+    </div>
+    <div class="cart-total">
+      <span>Total</span><strong id="cart-total">R$ 0,00</strong>
+    </div>
+    {% if usuario_atual and usuario_atual.papel == 'cliente' %}
+    <form id="checkout-form" class="checkout-form">
+      <label
+        >Endereço de entrega<textarea
+          name="endereco"
+          required
+          minlength="8"
+          placeholder="Rua, número, bairro e complemento"
+        ></textarea></label
+      ><label
+        >Forma de pagamento<select name="pagamento" required>
+          <option value="">Selecione</option>
+          <option>Pix</option>
+          <option>Dinheiro</option>
+          <option>Cartão na entrega</option>
+        </select></label
+      ><label
+        >Observações (opcional)<input
+          name="observacao"
+          maxlength="500"
+          placeholder="Ex.: tirar cebola, interfone..." /></label
+      ><button class="btn btn-primary btn-block" type="submit">
+        Enviar pedido
+      </button>
+      <p class="form-feedback" id="checkout-feedback"></p>
+    </form>
+    {% else %}
+    <div class="login-checkout">
+      <p>Entre ou crie uma conta para concluir seu pedido.</p>
+      <a class="btn btn-primary btn-block" href="{{ url_for('login') }}"
+        >Entrar para continuar</a
+      >
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %} {% block scripts %}
+<script src="{{ url_for('static', filename='js/shop.js') }}"></script>
+{% endblock %}

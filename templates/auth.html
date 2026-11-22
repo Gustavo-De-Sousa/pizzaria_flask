@@ -1,0 +1,51 @@
+{% extends "base.html" %}{% block title %}{{ 'Criar conta' if modo == 'cadastro'
+else 'Entrar' }} | Forno da Vila{% endblock %} {% block content %}
+<section class="auth-page">
+  <div class="auth-decoration">🍕</div>
+  <form class="auth-card" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" /><span
+      class="eyebrow"
+      >BEM-VINDO AO FORNO DA VILA</span
+    >
+    <h1>
+      {{ 'Crie sua conta' if modo == 'cadastro' else 'Que bom ter você de volta'
+      }}
+    </h1>
+    <p>
+      {{ 'Cadastre-se para acompanhar seus pedidos.' if modo == 'cadastro' else
+      'Entre para fazer seu pedido.' }}
+    </p>
+    {% if modo == 'cadastro' %}<label
+      >Nome completo<input
+        name="nome"
+        required
+        maxlength="100"
+        autocomplete="name"
+        placeholder="Seu nome" /></label
+    >{% endif %}
+    <label
+      >E-mail<input
+        type="email"
+        name="email"
+        required
+        autocomplete="email"
+        placeholder="voce@email.com" /></label
+    ><label
+      >Senha<input
+        type="password"
+        name="senha"
+        required
+        minlength="8"
+        autocomplete="{{ 'new-password' if modo == 'cadastro' else 'current-password' }}"
+        placeholder="Mínimo de 8 caracteres" /></label
+    ><button class="btn btn-primary btn-block">
+      {{ 'Criar minha conta' if modo == 'cadastro' else 'Entrar' }}
+    </button>
+    <div class="auth-switch">
+      {% if modo == 'cadastro' %}Já tem conta?
+      <a href="{{ url_for('login') }}">Entrar</a>{% else %}Ainda não tem conta?
+      <a href="{{ url_for('cadastro') }}">Criar conta</a>{% endif %}
+    </div>
+  </form>
+</section>
+{% endblock %}

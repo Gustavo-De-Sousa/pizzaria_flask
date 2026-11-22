@@ -1,0 +1,47 @@
+{% extends "base.html" %}{% block title %}Meus pedidos | Forno da Vila{%
+endblock %} {% block content %}
+<section class="dashboard">
+  <div class="section-heading">
+    <div>
+      <span class="eyebrow">ACOMPANHE POR AQUI</span>
+      <h1>Meus pedidos</h1>
+    </div>
+    <a class="btn btn-outline" href="{{ url_for('index') }}#cardapio"
+      >Novo pedido</a
+    >
+  </div>
+  {% for p in pedidos %}
+  <article class="order-card">
+    <div class="order-top">
+      <div>
+        <b>Pedido #{{ p.id }}</b
+        ><small>{{ p.criado_em.strftime('%d/%m/%Y às %H:%M') }}</small>
+      </div>
+      <span class="status status-{{ p.status|lower|replace(' ', '-') }}"
+        >{{ p.status }}</span
+      >
+    </div>
+    <div class="order-lines">
+      {% for i in p.itens %}
+      <p>
+        {{ i.quantidade }}x {{ i.nome_produto }}
+        <span
+          >R$ {{ '%.2f'|format(i.preco_unitario*i.quantidade/100)|replace('.',
+          ',') }}</span
+        >
+      </p>
+      {% endfor %}
+    </div>
+    <div class="order-bottom">
+      <span>{{ p.pagamento }} · {{ p.endereco }}</span
+      ><b>R$ {{ '%.2f'|format(p.total/100)|replace('.', ',') }}</b>
+    </div>
+  </article>
+  {% else %}
+  <div class="empty-state">
+    Você ainda não fez nenhum pedido.
+    <a href="{{ url_for('index') }}#cardapio">Ver cardápio</a>
+  </div>
+  {% endfor %}
+</section>
+{% endblock %}
