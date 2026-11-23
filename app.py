@@ -1,10 +1,28 @@
+import hashlib
 import os
 import secrets
+import smtplib
+import ssl
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from email.message import EmailMessage
+from functools import wraps
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-from flask import Flask, abort, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import (
+    Flask,
+    abort,
+    current_app,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import func
@@ -14,16 +32,39 @@ load_dotenv()
 db = SQLAlchemy()
 csrf = CSRFProtect()
 BR_TZ = ZoneInfo("America/Sao_Paulo")
+MAX_INT32 = 2_147_483_647
+MAX_PRECO_CENTAVOS = MAX_INT32
+MAX_CAMPO_TEXTO = 500
 
 
 def agora_br():
     return datetime.now(BR_TZ).replace(tzinfo=None)
 
 
+def inteiro_positivo(valor):
+    if isinstance(valor, bool):
+        raise ValueError()
+    if isinstance(valor, int):
+        resultado = valor
+    elif isinstance(valor, str) and valor.isdecimal():
+        resultado = int(valor)
+    else:
+        raise ValueError()
+    if resultado < 1 or resultado > MAX_INT32:
+        raise ValueError()
+    return resultado
+
+
 def criar_app():
     app = Flask(__name__)
+    production = (
+        os.getenv("ENVIRONMENT", "").strip().lower() == "production"
+        or os.getenv("RENDER", "").strip().lower() == "true"
+    )
     secret_key = os.getenv("SECRET_KEY")
     if not secret_key:
+        if production:
+            raise RuntimeError("SECRET_KEY deve ser configurada em producao.")
         secret_key = secrets.token_hex(32)
         print("[AVISO] SECRET_KEY nao configurada; usando uma chave temporaria aleatoria.")
     elif len(secret_key) < 32:
@@ -33,20 +74,28 @@ def criar_app():
         "postgres://", "postgresql://", 1
     ) or "sqlite:///pizzaria.db"
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    app.config["MAX_CONTENT_LENGTH"] = 1_048_576
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-    production = (
-        os.getenv("ENVIRONMENT", "").strip().lower() == "production"
-        or os.getenv("RENDER", "").strip().lower() == "true"
-    )
     cookie_secure = os.getenv("COOKIE_SECURE")
     if cookie_secure is None:
         cookie_secure = "true" if production else "false"
-    secure_cookies = cookie_secure.lower() == "true"
+    cookie_secure = cookie_secure.strip().lower()
+    if cookie_secure not in ("true", "false"):
+        raise RuntimeError("COOKIE_SECURE deve ser true ou false.")
+    secure_cookies = cookie_secure == "true"
     if production and not secure_cookies:
         raise RuntimeError("COOKIE_SECURE=true deve ser configurado em producao.")
     app.config["SESSION_COOKIE_SECURE"] = secure_cookies
     app.config["WTF_CSRF_TIME_LIMIT"] = None
+    app.config["PUBLIC_BASE_URL"] = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    app.config["SMTP_HOST"] = os.getenv("SMTP_HOST", "").strip()
+    app.config["SMTP_PORT"] = os.getenv("SMTP_PORT", "587").strip()
+    app.config["SMTP_USERNAME"] = os.getenv("SMTP_USERNAME", "").strip()
+    app.config["SMTP_PASSWORD"] = os.getenv("SMTP_PASSWORD", "")
+    app.config["SMTP_FROM"] = os.getenv("SMTP_FROM", "").strip()
+    app.config["SMTP_USE_SSL"] = os.getenv("SMTP_USE_SSL", "false").strip().lower() == "true"
+    app.config["PASSWORD_RESET_IS_PRODUCTION"] = production
 
     db.init_app(app)
     csrf.init_app(app)
@@ -75,8 +124,19 @@ def criar_app():
             nome = request.form.get("nome", "").strip()
             email = request.form.get("email", "").strip().lower()
             senha = request.form.get("senha", "")
-            if not nome or not email or len(senha) < 8:
-                flash("Preencha os campos. A senha precisa ter pelo menos 8 caracteres.", "erro")
+            if (
+                not nome
+                or len(nome) > 100
+                or not email
+                or len(email) > 180
+                or not senha
+                or len(senha) < 8
+                or len(senha) > 256
+            ):
+                flash(
+                    "Confira os campos. A senha precisa ter entre 8 e 256 caracteres.",
+                    "erro",
+                )
             elif Usuario.query.filter_by(email=email).first():
                 flash("Este e-mail já está cadastrado.", "erro")
             else:
@@ -94,14 +154,112 @@ def criar_app():
         if request.method == "POST":
             email = request.form.get("email", "").strip().lower()
             senha = request.form.get("senha", "")
-            user = Usuario.query.filter_by(email=email).first()
-            if user and check_password_hash(user.senha_hash, senha):
-                session.clear()
-                session["usuario_id"] = user.id
-                flash("Login realizado.", "sucesso")
-                return redirect(url_for("admin") if user.papel == "admin" else url_for("index"))
-            flash("E-mail ou senha inválidos.", "erro")
+            if len(email) > 180 or len(senha) > 256:
+                flash("E-mail ou senha inválidos.", "erro")
+            else:
+                user = Usuario.query.filter_by(email=email).first()
+                if user and check_password_hash(user.senha_hash, senha):
+                    session.clear()
+                    session["usuario_id"] = user.id
+                    flash("Login realizado.", "sucesso")
+                    return redirect(
+                        url_for("admin") if user.papel == "admin" else url_for("index")
+                    )
+                flash("E-mail ou senha inválidos.", "erro")
         return render_template("auth.html", modo="login")
+
+    @app.route("/recuperar-senha", methods=["GET", "POST"])
+    def recuperar_senha():
+        if request.method == "POST":
+            smtp = configuracao_smtp()
+            if not smtp:
+                flash(
+                    "A recuperação por e-mail não está configurada. Configure SMTP e PUBLIC_BASE_URL.",
+                    "erro",
+                )
+                return render_template("recuperar_senha.html")
+
+            email = request.form.get("email", "").strip().lower()
+            user = Usuario.query.filter_by(email=email).first()
+            if user:
+                agora = agora_br()
+                TokenRecuperacaoSenha.query.filter(
+                    TokenRecuperacaoSenha.usuario_id == user.id,
+                    TokenRecuperacaoSenha.expira_em <= agora,
+                ).delete(synchronize_session=False)
+                db.session.commit()
+
+                token_recente = TokenRecuperacaoSenha.query.filter_by(
+                    usuario_id=user.id
+                ).order_by(TokenRecuperacaoSenha.criado_em.desc()).first()
+                if not token_recente or token_recente.criado_em <= agora - timedelta(minutes=1):
+                    token = secrets.token_urlsafe(32)
+                    registro = TokenRecuperacaoSenha(
+                        usuario_id=user.id,
+                        token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+                        criado_em=agora,
+                        expira_em=agora + timedelta(minutes=30),
+                    )
+                    db.session.add(registro)
+                    db.session.commit()
+                    link = (
+                        f"{current_app.config['PUBLIC_BASE_URL']}"
+                        f"{url_for('redefinir_senha', token=token)}"
+                    )
+                    try:
+                        enviar_email_recuperacao(user.email, link, smtp)
+                    except (OSError, smtplib.SMTPException):
+                        current_app.logger.exception(
+                            "Falha ao enviar e-mail de recuperacao de senha."
+                        )
+                        db.session.delete(registro)
+                        db.session.commit()
+                    else:
+                        TokenRecuperacaoSenha.query.filter(
+                            TokenRecuperacaoSenha.usuario_id == user.id,
+                            TokenRecuperacaoSenha.id != registro.id,
+                        ).delete(synchronize_session=False)
+                        db.session.commit()
+
+            flash(
+                "Se o e-mail estiver cadastrado e o envio estiver funcionando, "
+                "você receberá um link válido por 30 minutos.",
+                "sucesso",
+            )
+        return render_template("recuperar_senha.html")
+
+    @app.route("/redefinir-senha/<token>", methods=["GET", "POST"])
+    def redefinir_senha(token):
+        registro = buscar_token_recuperacao(token)
+        if not registro:
+            flash("Este link de recuperação é inválido ou expirou.", "erro")
+            return redirect(url_for("recuperar_senha"))
+
+        if request.method == "POST":
+            senha = request.form.get("senha", "")
+            confirmacao = request.form.get("confirmacao", "")
+            if len(senha) < 8:
+                flash("A senha precisa ter pelo menos 8 caracteres.", "erro")
+            elif len(senha) > 256:
+                flash("A senha não pode ter mais de 256 caracteres.", "erro")
+            elif senha != confirmacao:
+                flash("As senhas não conferem.", "erro")
+            else:
+                user = db.session.get(Usuario, registro.usuario_id)
+                if not user:
+                    db.session.delete(registro)
+                    db.session.commit()
+                    flash("Este link de recuperação é inválido ou expirou.", "erro")
+                    return redirect(url_for("recuperar_senha"))
+                user.senha_hash = generate_password_hash(senha)
+                TokenRecuperacaoSenha.query.filter_by(usuario_id=user.id).delete(
+                    synchronize_session=False
+                )
+                db.session.commit()
+                flash("Senha alterada. Entre com sua nova senha.", "sucesso")
+                return redirect(url_for("login"))
+
+        return render_template("redefinir_senha.html")
 
     @app.post("/sair")
     def sair():
@@ -114,35 +272,69 @@ def criar_app():
         user = usuario_logado()
         if not user or user.papel != "cliente":
             return jsonify(ok=False, erro="Entre em uma conta de cliente para finalizar."), 401
-        dados = request.get_json(silent=True) or {}
+        dados = request.get_json(silent=True)
+        if not isinstance(dados, dict):
+            return jsonify(ok=False, erro="Pedido inválido. Atualize a página e tente novamente."), 400
         itens = dados.get("itens", [])
-        endereco = str(dados.get("endereco", "")).strip()
-        pagamento = str(dados.get("pagamento", "")).strip()
-        observacao = str(dados.get("observacao", "")).strip()[:500]
+        endereco = dados.get("endereco")
+        pagamento = dados.get("pagamento")
+        observacao = dados.get("observacao", "")
+        if not isinstance(endereco, str) or not isinstance(pagamento, str):
+            return jsonify(ok=False, erro="Informe um endereço e uma forma de pagamento válida."), 400
+        if not isinstance(observacao, str):
+            return jsonify(ok=False, erro="Observação inválida."), 400
+        endereco = endereco.strip()
+        pagamento = pagamento.strip()
+        observacao = observacao.strip()[:500]
         if not isinstance(itens, list) or not itens or len(itens) > 30:
             return jsonify(ok=False, erro="Seu carrinho está vazio ou contém itens demais."), 400
-        if not endereco or len(endereco) < 8 or pagamento not in ["Pix", "Dinheiro", "Cartão na entrega"]:
+        if not endereco or len(endereco) < 8 or len(endereco) > MAX_CAMPO_TEXTO:
+            return jsonify(ok=False, erro="Informe um endereço e uma forma de pagamento válida."), 400
+        if pagamento not in ["Pix", "Dinheiro", "Cartão na entrega"]:
             return jsonify(ok=False, erro="Informe um endereço e uma forma de pagamento válida."), 400
 
-        pedido = Pedido(cliente_id=user.id, endereco=endereco, pagamento=pagamento,
-                        observacao=observacao, status="Recebido", total=0)
-        total = 0
+        quantidades = {}
         try:
             for item in itens:
-                produto_id = int(item.get("produto_id"))
-                quantidade = int(item.get("quantidade"))
-                if quantidade < 1 or quantidade > 20:
+                if not isinstance(item, dict):
                     raise ValueError()
-                produto = db.session.get(Produto, produto_id)
-                if not produto or not produto.ativo:
-                    return jsonify(ok=False, erro="Um produto não está mais disponível."), 400
-                subtotal = produto.preco * quantidade
-                total += subtotal
-                pedido.itens.append(ItemPedido(produto_id=produto.id, nome_produto=produto.nome,
-                                               quantidade=quantidade, preco_unitario=produto.preco))
-            if total <= 0:
-                raise ValueError()
-        except (ValueError, TypeError, AttributeError):
+                produto_id = inteiro_positivo(item.get("produto_id"))
+                quantidade = inteiro_positivo(item.get("quantidade"))
+                total_quantidade = quantidades.get(produto_id, 0) + quantidade
+                if total_quantidade > 20:
+                    raise ValueError()
+                quantidades[produto_id] = total_quantidade
+        except (ValueError, TypeError):
+            return jsonify(ok=False, erro="Carrinho inválido. Atualize a página e tente novamente."), 400
+
+        pedido = Pedido(
+            cliente_id=user.id,
+            endereco=endereco,
+            pagamento=pagamento,
+            observacao=observacao,
+            status="Recebido",
+            total=0,
+        )
+        total = 0
+        for produto_id, quantidade in quantidades.items():
+            produto = db.session.get(Produto, produto_id)
+            if not produto or not produto.ativo:
+                return jsonify(ok=False, erro="Um produto não está mais disponível."), 400
+            if produto.preco <= 0 or produto.preco > MAX_PRECO_CENTAVOS:
+                return jsonify(ok=False, erro="Preço de produto inválido."), 400
+            subtotal = produto.preco * quantidade
+            if total + subtotal > MAX_PRECO_CENTAVOS:
+                return jsonify(ok=False, erro="O valor total do pedido excede o limite permitido."), 400
+            total += subtotal
+            pedido.itens.append(
+                ItemPedido(
+                    produto_id=produto.id,
+                    nome_produto=produto.nome,
+                    quantidade=quantidade,
+                    preco_unitario=produto.preco,
+                )
+            )
+        if total <= 0:
             return jsonify(ok=False, erro="Carrinho inválido. Atualize a página e tente novamente."), 400
 
         pedido.total = total
@@ -199,9 +391,24 @@ def criar_app():
             nome = request.form.get("nome", "").strip()
             categoria = request.form.get("categoria", "").strip()
             descricao = request.form.get("descricao", "").strip()[:300]
-            preco = int(round(float(request.form.get("preco", "0").replace(",", ".")) * 100))
-            imagem = request.form.get("imagem", "").strip()[:500]
-            if not nome or categoria not in ["Pizzas", "Bebidas", "Sobremesas"] or preco <= 0:
+            preco_decimal = Decimal(request.form.get("preco", "0").replace(",", "."))
+            if (
+                not preco_decimal.is_finite()
+                or preco_decimal <= 0
+                or preco_decimal > Decimal(MAX_PRECO_CENTAVOS) / 100
+            ):
+                raise ValueError()
+            preco = int(
+                (preco_decimal * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+            )
+            imagem = request.form.get("imagem", "").strip()[:MAX_CAMPO_TEXTO]
+            if (
+                not nome
+                or len(nome) > 120
+                or categoria not in ["Pizzas", "Bebidas", "Sobremesas"]
+                or preco <= 0
+                or preco > MAX_PRECO_CENTAVOS
+            ):
                 raise ValueError()
             produto = db.session.get(Produto, int(produto_id)) if produto_id else Produto()
             if not produto:
@@ -212,7 +419,7 @@ def criar_app():
             db.session.add(produto)
             db.session.commit()
             flash("Produto salvo.", "sucesso")
-        except (ValueError, TypeError):
+        except (InvalidOperation, ValueError, TypeError):
             flash("Confira nome, categoria e preço.", "erro")
         return redirect(url_for("admin") + "#produtos")
 
@@ -259,10 +466,78 @@ def criar_app():
     return app
 
 
-from functools import wraps
 def usuario_logado():
     uid = session.get("usuario_id")
     return db.session.get(Usuario, uid) if uid else None
+
+
+def configuracao_smtp():
+    host = current_app.config["SMTP_HOST"]
+    username = current_app.config["SMTP_USERNAME"]
+    password = current_app.config["SMTP_PASSWORD"]
+    sender = current_app.config["SMTP_FROM"]
+    public_base_url = current_app.config["PUBLIC_BASE_URL"]
+    try:
+        url = urlsplit(public_base_url)
+    except ValueError:
+        return None
+    if (
+        not host
+        or not username
+        or not password
+        or not sender
+        or not url.hostname
+        or url.username
+        or url.password
+        or url.scheme not in ("http", "https")
+        or (current_app.config["PASSWORD_RESET_IS_PRODUCTION"] and url.scheme != "https")
+    ):
+        return None
+    try:
+        port = int(current_app.config["SMTP_PORT"])
+    except ValueError:
+        return None
+    if not 1 <= port <= 65535:
+        return None
+    return {
+        "host": host,
+        "port": port,
+        "username": username,
+        "password": password,
+        "sender": sender,
+        "use_ssl": current_app.config["SMTP_USE_SSL"],
+    }
+
+
+def enviar_email_recuperacao(destinatario, link, smtp):
+    mensagem = EmailMessage()
+    mensagem["Subject"] = "Redefinição de senha - Forno da Vila"
+    mensagem["From"] = smtp["sender"]
+    mensagem["To"] = destinatario
+    mensagem.set_content(
+        "Recebemos um pedido para redefinir a senha da sua conta.\n\n"
+        f"Acesse este link para escolher uma nova senha:\n{link}\n\n"
+        "O link expira em 30 minutos. Se você não solicitou a alteração, ignore este e-mail."
+    )
+
+    cliente_smtp = smtplib.SMTP_SSL if smtp["use_ssl"] else smtplib.SMTP
+    with cliente_smtp(smtp["host"], smtp["port"], timeout=10) as cliente:
+        if not smtp["use_ssl"]:
+            cliente.starttls(context=ssl.create_default_context())
+        cliente.login(smtp["username"], smtp["password"])
+        cliente.send_message(mensagem)
+
+
+def buscar_token_recuperacao(token):
+    if len(token) != 43:
+        return None
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    registro = TokenRecuperacaoSenha.query.filter_by(token_hash=token_hash).first()
+    if registro and registro.expira_em <= agora_br():
+        db.session.delete(registro)
+        db.session.commit()
+        return None
+    return registro
 
 
 def admin_required(view):
@@ -294,6 +569,14 @@ class Usuario(db.Model):
     papel = db.Column(db.String(20), nullable=False, default="cliente")
     criado_em = db.Column(db.DateTime, default=agora_br)
     pedidos = db.relationship("Pedido", back_populates="cliente")
+
+
+class TokenRecuperacaoSenha(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    usuario_id = db.Column(db.Integer, db.ForeignKey("usuario.id"), nullable=False, index=True)
+    token_hash = db.Column(db.String(64), nullable=False, unique=True)
+    criado_em = db.Column(db.DateTime, nullable=False, default=agora_br)
+    expira_em = db.Column(db.DateTime, nullable=False)
 
 
 class Produto(db.Model):
@@ -350,6 +633,10 @@ def criar_admin_inicial():
                     "O admin inicial ainda usa a senha padrao. Configure ADMIN_EMAIL "
                     "e uma nova ADMIN_PASSWORD segura."
                 )
+            if len(senha) < 12:
+                raise RuntimeError("ADMIN_PASSWORD deve ter pelo menos 12 caracteres.")
+            if len(senha) > 256:
+                raise RuntimeError("ADMIN_PASSWORD nao pode ter mais de 256 caracteres.")
             admin.email = email
             admin.senha_hash = generate_password_hash(senha)
             db.session.commit()
@@ -362,6 +649,8 @@ def criar_admin_inicial():
         )
     if len(senha) < 12:
         raise RuntimeError("ADMIN_PASSWORD deve ter pelo menos 12 caracteres.")
+    if len(senha) > 256:
+        raise RuntimeError("ADMIN_PASSWORD nao pode ter mais de 256 caracteres.")
 
     admin = Usuario(
         nome=os.getenv("ADMIN_NAME", "Administrador").strip() or "Administrador",

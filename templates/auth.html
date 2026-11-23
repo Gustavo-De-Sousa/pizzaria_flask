@@ -28,6 +28,7 @@ else 'Entrar' }} | Forno da Vila{% endblock %} {% block content %}
         type="email"
         name="email"
         required
+        maxlength="180"
         autocomplete="email"
         placeholder="voce@email.com" /></label
     ><label
@@ -36,11 +37,17 @@ else 'Entrar' }} | Forno da Vila{% endblock %} {% block content %}
         name="senha"
         required
         minlength="8"
+        maxlength="256"
         autocomplete="{{ 'new-password' if modo == 'cadastro' else 'current-password' }}"
         placeholder="Mínimo de 8 caracteres" /></label
     ><button class="btn btn-primary btn-block">
       {{ 'Criar minha conta' if modo == 'cadastro' else 'Entrar' }}
     </button>
+    {% if modo == 'login' %}
+    <div class="auth-switch">
+      <a href="{{ url_for('recuperar_senha') }}">Esqueceu sua senha?</a>
+    </div>
+    {% endif %}
     <div class="auth-switch">
       {% if modo == 'cadastro' %}Já tem conta?
       <a href="{{ url_for('login') }}">Entrar</a>{% else %}Ainda não tem conta?

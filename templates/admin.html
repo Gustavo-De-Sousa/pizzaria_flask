@@ -36,7 +36,7 @@ Vila{% endblock %} {% block content %}
         <span class="eyebrow">ACOMPANHAMENTO</span>
         <h2>Pedidos recebidos</h2>
       </div>
-      <span class="live-pill">● Atualização automática</span>
+      <span class="live-pill" aria-live="polite">● Atualização automática</span>
     </div>
     <div id="admin-orders">
       {% for p in pedidos %}
@@ -165,6 +165,7 @@ Vila{% endblock %} {% block content %}
         >Nome<input
           name="nome"
           required
+          maxlength="120"
           value="{{ produto_edicao.nome if produto_edicao else '' }}" /></label
       ><label
         >Categoria<select name="categoria">
@@ -188,6 +189,7 @@ Vila{% endblock %} {% block content %}
           name="preco"
           type="number"
           min="0.01"
+          max="21474836.47"
           step="0.01"
           required
           value="{{ '%.2f'|format(produto_edicao.preco/100) if produto_edicao else '' }}" /></label
@@ -195,6 +197,7 @@ Vila{% endblock %} {% block content %}
         >URL da imagem<input
           name="imagem"
           type="url"
+          maxlength="500"
           placeholder="https://..."
           value="{{ produto_edicao.imagem_url if produto_edicao else '' }}" /></label
       ><label class="wide"

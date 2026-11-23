@@ -873,6 +873,10 @@ footer small {
     color: var(--green)
 }
 
+.live-pill.error {
+    color: var(--red)
+}
+
 .admin-order-head strong {
     font-size: 16px
 }

@@ -1,0 +1,25 @@
+{% extends "base.html" %}{% block title %}Recuperar senha | Forno da Vila{% endblock %} {% block content %}
+<section class="auth-page">
+  <div class="auth-decoration">🍕</div>
+  <form class="auth-card" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+    <span class="eyebrow">RECUPERAÇÃO DE ACESSO</span>
+    <h1>Esqueceu sua senha?</h1>
+    <p>Informe seu e-mail e, se houver uma conta, enviaremos um link para criar outra senha.</p>
+    <label>
+      E-mail
+      <input
+        type="email"
+        name="email"
+        required
+        autocomplete="email"
+        placeholder="voce@email.com"
+      />
+    </label>
+    <button class="btn btn-primary btn-block">Enviar link de recuperação</button>
+    <div class="auth-switch">
+      <a href="{{ url_for('login') }}">Voltar para entrar</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

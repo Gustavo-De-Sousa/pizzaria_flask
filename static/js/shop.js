@@ -28,16 +28,10 @@
   document.querySelectorAll(".add-button").forEach((btn) =>
     btn.addEventListener("click", () => {
       const id = Number(btn.dataset.id),
+        price = Number(btn.dataset.price),
         old = cart.get(id);
       if (old) old.qty = Math.min(20, old.qty + 1);
-      else cart.set(id, { name: btn.dataset.name, price: 0, qty: 1 });
-      // O preço exibido é apenas informativo; o servidor consulta o banco e calcula o total real.
-      const card = btn.closest(".product-card"),
-        priceText = card.querySelector(".product-bottom strong").textContent;
-      const numeric = Number(
-        priceText.replace("R$", "").trim().replace(".", "").replace(",", "."),
-      );
-      cart.get(id).price = Math.round(numeric * 100);
+      else cart.set(id, { name: btn.dataset.name, price, qty: 1 });
       render();
     }),
   );
@@ -49,8 +43,15 @@
     modal.classList.remove("show");
     modal.setAttribute("aria-hidden", "true");
   });
+  function closeCart() {
+    modal?.classList.remove("show");
+    modal?.setAttribute("aria-hidden", "true");
+  }
   modal?.addEventListener("click", (e) => {
-    if (e.target === modal) modal.classList.remove("show");
+    if (e.target === modal) closeCart();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && modal?.classList.contains("show")) closeCart();
   });
   document.getElementById("cart-items")?.addEventListener("click", (e) => {
     const minus = e.target.dataset.minus,
@@ -108,8 +109,9 @@
           headers: { "Content-Type": "application/json", "X-CSRFToken": token },
           body: JSON.stringify(payload),
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.erro || "Não foi possível enviar.");
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(data?.erro || "Não foi possível enviar.");
+        if (!data?.ok) throw new Error(data?.erro || "Não foi possível enviar.");
         cart.clear();
         render();
         feedback.textContent = `Pedido #${data.pedido_id} enviado!`;

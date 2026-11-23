@@ -2,16 +2,27 @@
   const root = document.getElementById("admin-orders");
   if (!root) return;
   const token = document.querySelector('meta[name="csrf-token"]')?.content;
+  const liveStatus = document.querySelector(".live-pill");
   const money = (n) =>
     n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   let lastSignature = "";
+  function showRefreshStatus(ok) {
+    if (!liveStatus) return;
+    liveStatus.textContent = ok
+      ? "● Atualização automática"
+      : "Falha na atualização. Verifique a conexão.";
+    liveStatus.classList.toggle("error", !ok);
+  }
   async function refresh() {
     try {
       const res = await fetch("/admin/pedidos.json", {
         headers: { Accept: "application/json" },
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        throw new Error(`Falha ao atualizar pedidos: HTTP ${res.status}`);
+      }
       const pedidos = await res.json();
+      showRefreshStatus(true);
       document.getElementById("admin-order-count").textContent = pedidos.length;
       const signature = JSON.stringify(pedidos);
       if (signature === lastSignature) return;
@@ -94,7 +105,8 @@
         root.append(card);
       });
     } catch (e) {
-      /* próxima atualização tentará novamente */
+      console.error("Falha na atualização automática dos pedidos.", e);
+      showRefreshStatus(false);
     }
   }
   refresh();

@@ -72,6 +72,7 @@ endblock %} {% block content %}
           ><button
             class="add-button"
             data-id="{{ p.id }}"
+            data-price="{{ p.preco }}"
             data-name="{{ p.nome }}"
             aria-label="Adicionar {{ p.nome }}"
           >
@@ -129,6 +130,7 @@ endblock %} {% block content %}
           name="endereco"
           required
           minlength="8"
+          maxlength="500"
           placeholder="Rua, número, bairro e complemento"
         ></textarea></label
       ><label
